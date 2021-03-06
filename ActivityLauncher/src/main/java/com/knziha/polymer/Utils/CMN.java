@@ -4,6 +4,8 @@ import android.content.res.Resources;
 import android.view.View;
 import android.view.ViewGroup;
 
+import org.xwalk.core.Utils;
+
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.util.Arrays;
@@ -16,7 +18,7 @@ public class CMN {
     public final static String emptyStr = "";
     public static final HashMap<String, String> AssetMap = new HashMap<>();
 	public static final Boolean OccupyTag = true;
-    
+	
 	public static int GlobalPageBackground = 0;
 	public static int MainBackground = 0;
 	public static int FloatBackground;
@@ -60,44 +62,8 @@ public class CMN {
 	public static boolean editAll;
 	public static boolean darkRequest=true;
 	public static void Log(Object... o) {
-		StringBuilder msg= new StringBuilder();
-		if(o!=null)
-		for (Object o1 : o) {
-			if(o1!=null) {
-				if (o1 instanceof Exception) {
-					ByteArrayOutputStream s = new ByteArrayOutputStream();
-					PrintStream p = new PrintStream(s);
-					((Exception) o1).printStackTrace(p);
-					msg.append(s.toString());
-				}
-				if (o1 instanceof Exception) {
-					ByteArrayOutputStream s = new ByteArrayOutputStream();
-					PrintStream p = new PrintStream(s);
-					((Exception) o1).printStackTrace(p);
-					msg.append(s.toString());
-				}
-				if (o1 instanceof int[]) {
-					msg.append(Arrays.toString((int[]) o1));
-					continue;
-				} else if (o1 instanceof String[]) {
-					msg.append(Arrays.toString((Object[]) o1));
-					continue;
-				} else if (o1 instanceof short[]) {
-					msg.append(Arrays.toString((short[]) o1));
-					continue;
-				} else if (o1 instanceof byte[]) {
-					msg.append(Arrays.toString((byte[]) o1));
-					continue;
-				}
-			}
-			if(msg.length()>0) msg.append(", ");
-			msg.append(o1);
-		}
-		if(testing) {
-			System.out.println(msg.toString());
-		} else {
-			android.util.Log.d("fatal poison",msg.toString());
-		}
+		Utils.testing = testing;
+		Utils.Log(o);
 	}
 	public static void recurseLog(View v,String... depths) {
 		String depth = depths!=null && depths.length>0?depths[0]:"- ";

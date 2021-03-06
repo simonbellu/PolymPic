@@ -246,7 +246,7 @@
 					android:layout_weight="1"
 					android:layout_height="match_parent"
 					android:background="@drawable/surrtrip1"
-					android:src="@drawable/ic_menu_black_24dp" />
+					android:src="@drawable/ic_menu_24dp" />
 			</com.knziha.polymer.widgets.LineaSlidog>
 
 			<View
@@ -276,14 +276,12 @@
 
 		<ViewStub
 			android:id="@+id/app_toast"
-			android:layout="@layout/app_toast"
-			android:layout_width="match_parent"
-			android:layout_height="65dp"
+			android:layout="@layout/app_toast_small"
+			android:layout_width="wrap_content"
+			android:layout_height="45dp"
 			android:orientation="horizontal"
 			android:gravity="center"
-			android:layout_marginStart="50dp"
-			android:layout_marginEnd=  "50dp"
-			android:layout_marginBottom="100dp"
+			android:layout_marginBottom="80dp"
 			android:layout_gravity="bottom|center"
 			/>
 

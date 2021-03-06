@@ -1,14 +1,24 @@
 package com.knziha.polymer;
 
+import android.app.PendingIntent;
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.drawable.Drawable;
+import android.net.Uri;
+
+import androidx.core.content.pm.ShortcutInfoCompat;
+import androidx.core.content.pm.ShortcutManagerCompat;
+import androidx.core.graphics.drawable.IconCompat;
 
 import com.knziha.polymer.Utils.CMN;
+import com.knziha.polymer.Utils.MyReceiver;
 import com.knziha.polymer.database.LexicalDBHelper;
 import com.knziha.polymer.toolkits.Utils.BU;
+import com.knziha.polymer.webstorage.WebDict;
 
+import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -335,46 +345,12 @@ public class TestHelper {
 		return sb.toString();
 	}
 	
-	public static void testAddWebDicts(ArrayList<String> WebDicts) {
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
-		WebDicts.add("https://www.baidu.com/s?wd=%s");
+	public static void testAddWebDicts(ArrayList<WebDict> WebDicts) {
+		WebDicts.add(new WebDict("https://www.baidu.com/s?wd=%s", "百度一下"));
+		WebDicts.add(new WebDict("https://cn.bing.com/search?q=%s", "必应搜索"));
+		//WebDicts.add(new WebDict("https://www.sogou.com/sogou?query=%s&insite=zhihu.com&pid=sogou-wsse-ff111e4a5406ed40", "搜狗 | 知乎搜索"));
+		//WebDicts.add(new WebDict("https://m.sogou.com/web/searchList.jsp?&insite=zhihu.com&pid=sogou-waps-21a38ed2ee0c2c08&keyword=%s", "搜狗 | 知乎搜索"));
+		WebDicts.add(new WebDict("https://m.sogou.com/web/searchList.jsp?&insite=zhihu.com&keyword=%s", "搜狗 | 知乎搜索"));
 	}
 	
 	public static void async(Runnable run){
@@ -399,6 +375,43 @@ public class TestHelper {
 			CMN.Log("WTF 转构完毕！！！", aval, len);
 		} catch (IOException e) {
 			CMN.Log(e);
+		}
+	}
+	
+	public static void createWVBSC(BrowserActivity a, int type) {
+		if (ShortcutManagerCompat.isRequestPinShortcutSupported(a)) {
+			String p = "com.knziha.polymer.browser.benchmarks.V8Benchmark";
+			String n = "knziha.V8B";
+			if (type==1) {
+				p += "X5";
+				n += "X5";
+			} else if (type==2) {
+				p += "XW";
+				n += "XW";
+			}
+			lnkActivity(a, p, n);
+		}
+	}
+	
+	private static void lnkActivity(BrowserActivity a, String p, String n) {
+		Intent intent = new Intent(Intent.ACTION_MAIN);
+		intent.setClassName("com.knziha.polymer", p);
+		intent.putExtra("main", true);
+		intent.setData(Uri.fromFile(new File("123345")));
+		ShortcutInfoCompat info = new ShortcutInfoCompat.Builder(a, n)
+				.setIcon(IconCompat.createWithResource(a, R.drawable.star_ic))
+				.setShortLabel(n)
+				.setIntent(intent)
+				.build();
+		PendingIntent shortcutCallbackIntent = PendingIntent.getBroadcast(a, 0, new Intent(a, MyReceiver.class), PendingIntent.FLAG_UPDATE_CURRENT);
+		ShortcutManagerCompat.requestPinShortcut(a, info, shortcutCallbackIntent.getIntentSender());
+	}
+	
+	public static void createXWalkSC(BrowserActivity a) {
+		if (ShortcutManagerCompat.isRequestPinShortcutSupported(a)) {
+			String p = "com.knziha.polymer.browser.webkit.XWalkMainActivity";
+			String n = "knziha.XWalk";
+			lnkActivity(a, p, n);
 		}
 	}
 }

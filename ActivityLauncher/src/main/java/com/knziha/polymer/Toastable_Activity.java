@@ -17,6 +17,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
+import android.os.PowerManager;
 import android.util.DisplayMetrics;
 import android.view.Display;
 import android.view.Gravity;
@@ -94,7 +95,7 @@ public class Toastable_Activity extends AppCompatActivity {
 	
 	public Resources mResource;
 	
-	public Dialog d;
+	public androidx.appcompat.app.AlertDialog d;
 	public View dv;
 	public Configuration mConfiguration;
 	boolean isDarkStamp;
@@ -103,8 +104,20 @@ public class Toastable_Activity extends AppCompatActivity {
 	protected WeakReference[] WeakReferencePool = new WeakReference[WeakReferenceHelper.poolSize];
 	protected boolean requireStorage;
 	
+	protected boolean mWakeLocked;
+	protected PowerManager.WakeLock mWakeLock;
+	
 	public void post(Runnable runnable) {
 		root.post(runnable);
+	}
+	
+	public void acquireWakeLock() {
+		if(mWakeLock==null) {
+			PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+			mWakeLock = pm.newWakeLock(PowerManager.FULL_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP | PowerManager.ON_AFTER_RELEASE, "servis:SimpleTimer");
+		}
+		mWakeLocked = true;
+		mWakeLock.acquire();
 	}
 	
 	static class BaseHandler extends Handler {
@@ -125,7 +138,10 @@ public class Toastable_Activity extends AppCompatActivity {
 	int NextSnackLength;
 	protected ViewGroup DefaultTSView;
 	long exitTime = 0;
-
+	
+	protected boolean checkResumeQRText;
+	public static String StaticTextExtra;
+	
 	@Override
 	protected void onCreate(Bundle savedInstanceState) {
 		opt = new Options(this);
@@ -182,6 +198,20 @@ public class Toastable_Activity extends AppCompatActivity {
 		try {
 			super.onResume();
 		} catch (Exception ignored) { /*无敌*/ }
+		if(mWakeLocked) {
+			try {
+				mWakeLock.release();
+				mWakeLocked=false;
+			} catch (Exception ignored) { }
+		}
+		if(checkResumeQRText && StaticTextExtra!=null) {
+			onQRGetText(StaticTextExtra);
+			StaticTextExtra = null;
+		}
+	}
+	
+	protected void onQRGetText(String text) {
+	
 	}
 
 	@Override
@@ -557,14 +587,14 @@ public class Toastable_Activity extends AppCompatActivity {
 		}
 	}
 	
-	protected Object getReferencedObject(int id) {
+	public Object getReferencedObject(int id) {
 		if(WeakReferencePool[id] == null) {
 			return null;
 		}
 		return WeakReferencePool[id].get();
 	}
 	
-	protected void putReferencedObject(int id, Object object) {
+	public void putReferencedObject(int id, Object object) {
 		WeakReferencePool[id] = new WeakReference(object);
 	}
 }

@@ -6,6 +6,8 @@ import android.os.Build;
 import com.knziha.polymer.Utils.CMN;
 
 import java.lang.ref.WeakReference;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Queue;
@@ -55,6 +57,7 @@ public class BrowseTaskExecutor implements Runnable{
 								this.token = token;
 							}
 							boolean interrupted=false;
+							long st=CMN.now();
 							try {
 								CMN.Log("等待2.5min —————— ");
 								// 等待2.5min, 这是 webStation 的占用时限。
@@ -63,7 +66,7 @@ public class BrowseTaskExecutor implements Runnable{
 								// 中断，放弃任务。
 								interrupted = true;
 							}
-							CMN.Log("等待2.5min  ——————  over", interrupted);
+							CMN.Log("等待2.5min  ——————  over", interrupted, CMN.now()-st);
 							if(!interrupted) { //timeout
 								token.set(true);
 								a.notifyTaskStopped(task.id);
@@ -182,7 +185,7 @@ public class BrowseTaskExecutor implements Runnable{
 		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
 			taskQueue.removeIf(val -> val==id);
 		} else {
-			while(taskQueue.remove(id));
+			taskQueue.removeAll(Collections.singletonList(id));
 		}
 	}
 }

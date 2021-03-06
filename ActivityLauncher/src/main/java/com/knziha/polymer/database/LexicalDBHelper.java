@@ -5,6 +5,7 @@ import android.content.Context;
 import android.database.Cursor;
 import android.database.SQLException;
 import android.database.sqlite.SQLiteDatabase;
+import android.database.sqlite.SQLiteFullException;
 import android.database.sqlite.SQLiteOpenHelper;
 import android.database.sqlite.SQLiteStatement;
 import android.net.Uri;
@@ -16,6 +17,7 @@ import com.knziha.polymer.AdvancedBrowserWebView;
 import com.knziha.polymer.Utils.CMN;
 import com.knziha.polymer.pdviewer.PDocument;
 import com.knziha.polymer.pdviewer.bookdata.PDocBookInfo;
+import com.knziha.polymer.widgets.WebFrameLayout;
 
 import org.apache.commons.lang3.StringUtils;
 
@@ -90,6 +92,7 @@ public class LexicalDBHelper extends SQLiteOpenHelper {
 	
 	public synchronized void try_close() {
 		if(--INSTANCE_COUNT<=0) {
+			closeCursors();
 			close();
 			INSTANCE=null;
 			INSTANCE_COUNT=0;
@@ -107,6 +110,8 @@ public class LexicalDBHelper extends SQLiteOpenHelper {
     public static final String Date = "date"; //路径
     
     public String pathName;
+    
+   // public final boolean isFake;
 
 	/** 创建历史纪录数据库 */
 	public LexicalDBHelper(Context context) {
@@ -195,19 +200,19 @@ public class LexicalDBHelper extends SQLiteOpenHelper {
 				"id INTEGER PRIMARY KEY AUTOINCREMENT," + // 0
 				"title TEXT," + // 1
 				"url TEXT NOT NULL," + // 2
-				"search TEXT," + // 1
-				"page_info TEXT," + // 3 页面位置的记忆
-				"zoom_info TEXT," + // 4 缩放信息 TODO
-				"thumbnail BLOB," + // 7
+				"search TEXT," + // 3
+				"page_info TEXT," + // 4 页面位置的记忆
+				"zoom_info TEXT," + // 5 缩放信息 TODO
+				"thumbnail BLOB," + // 6
 				"webstack BLOB," + // 7
 				"ext1 TEXT,"+ // 8 comments
 				"f1 INTEGER DEFAULT 0 NOT NULL," + // 9
 				"f2 INTEGER DEFAULT 0 NOT NULL," +  // 10
 				"favor INTEGER DEFAULT 0 NOT NULL," +  // 11 喜爱等级 TODO
-				"visit_count INTEGER DEFAULT 0 NOT NULL,"+ // 14
-				"rank INTEGER DEFAULT 0 NOT NULL," + // 15
-				"creation_time INTEGER DEFAULT 0 NOT NULL," + // 15
-				"last_visit_time INTEGER DEFAULT 0 NOT NULL" + // 16
+				"visit_count INTEGER DEFAULT 0 NOT NULL,"+ // 12
+				"rank INTEGER DEFAULT 0 NOT NULL," + // 13
+				"creation_time INTEGER DEFAULT 0 NOT NULL," + // 14
+				"last_visit_time INTEGER DEFAULT 0 NOT NULL" + // 15 最后有效入库时间
 				")";
 		db.execSQL(createWebTable);
 		
@@ -227,19 +232,21 @@ public class LexicalDBHelper extends SQLiteOpenHelper {
 			db.execSQL("CREATE INDEX if not exists pdoc_progress_index ON pdoc (progress)");
 		}
 		//db.execSQL("CREATE INDEX if not exists pdoc_url_index ON pdoc (url)");
-		db.execSQL("CREATE INDEX if not exists webtabs_rank_index ON webtabs (rank)");
+		db.execSQL("CREATE INDEX if not exists webtabs_time_index ON webtabs (creation_time)");
 		
 		
 		CMN.Log("onDbCreate..done");
     }
 	
 	public Cursor queryTabs() {
-		return database.rawQuery("select id,title,url,search,f1,rank from webtabs order by rank", null);
+		return database.rawQuery("select id,title,url,search,f1,rank,creation_time from webtabs order by rank", null);
 	}
 	
-	public long insertNewTab(String defaultUrl) {
+	public long insertNewTab(String defaultUrl, long creation) {
 		ContentValues values = new ContentValues();
 		values.put("url", defaultUrl);
+		values.put("creation_time", creation);
+		values.put("last_visit_time", creation);
 		return database.insert("webtabs", null, values);
 	}
 	
@@ -393,13 +400,13 @@ public class LexicalDBHelper extends SQLiteOpenHelper {
 	
 	// 搜索引擎列表，导航页，需要域数据库记录的图标。
 	// 常规访问，updateua (loadurl、刷新、onpagestart之时) 需要域数据库记录的配置信息。
-	public void queryDomain(AdvancedBrowserWebView mWebView, String url) {
+	public void queryDomain(WebFrameLayout layout, String url) {
 		String domain = null;
 		Matcher m = domainPattern.matcher(url);
 		if(m.find()) {
 			domain = m.group();
 		}
-		Cursor infoCursor = mWebView.domainInfoCursor;
+		Cursor infoCursor = layout.domainInfoCursor;
 		if(infoCursor!=null && TextUtils.equals(infoCursor.getString(1), domain)) {
 			return;
 		}
@@ -413,23 +420,23 @@ public class LexicalDBHelper extends SQLiteOpenHelper {
 				infoCursor = null;
 			}
 		}
-		mWebView.setDomainCursor(domain, infoCursor);
+		layout.setDomainCursor(domain, infoCursor);
 	}
 	
-	public void updateDomainFlag(AdvancedBrowserWebView mWebView, long val) {
-		String domain = mWebView.domain;
+	public void updateDomainFlag(WebFrameLayout layout, long val) {
+		String domain = layout.domain;
 		if(domain!=null) {
 			ContentValues values = new ContentValues();
 			values.put("url", domain);
 			values.put("f1", val);
-			AdvancedBrowserWebView.DomainInfo domainInfo = mWebView.domainInfo;
+			WebFrameLayout.DomainInfo domainInfo = layout.domainInfo;
 			if(domainInfo!=null) {
 				long rowID = domainInfo.rowID;
 				database.update("domains", values, "id=?", new String[]{""+rowID});
 				domainInfo.f1 = val;
 			} else {
 				long rowID = database.insert("domains", null, values);
-				mWebView.setDomainCursor(mWebView.domain
+				layout.setDomainCursor(layout.domain
 						, database.rawQuery("select * from domains where id=?", new String[]{""+rowID})
 						);
 			}
@@ -437,7 +444,7 @@ public class LexicalDBHelper extends SQLiteOpenHelper {
 	}
 	
 	// 配置网址设定、插入图标前，需保证有存储目标
-	public void insertUpdateDomain(AdvancedBrowserWebView mWebView, String url, Long val) {
+	public void insertUpdateDomain(WebFrameLayout layout, String url, Long val) {
 		Matcher m = domainPattern.matcher(url);
 		String domain = null;
 		Cursor infoCursor = null;
@@ -445,8 +452,8 @@ public class LexicalDBHelper extends SQLiteOpenHelper {
 			domain = m.group();
 			final String sql = "select * from domains where url = ? ";
 			String[] where = new String[]{domain};
-			if(TextUtils.equals(mWebView.domain, domain)) {
-				infoCursor = mWebView.domainInfoCursor;
+			if(TextUtils.equals(layout.domain, domain)) {
+				infoCursor = layout.domainInfoCursor;
 				if(infoCursor!=null && !infoCursor.moveToFirst()) {
 					infoCursor = null;
 				}
@@ -469,7 +476,7 @@ public class LexicalDBHelper extends SQLiteOpenHelper {
 				}
 			}
 		}
-		mWebView.setDomainCursor(domain, infoCursor);
+		layout.setDomainCursor(domain, infoCursor);
 	}
 	
 	public long insertSearchTerm(String lex) {

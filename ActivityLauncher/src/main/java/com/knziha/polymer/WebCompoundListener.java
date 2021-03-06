@@ -5,14 +5,14 @@ import android.animation.AnimatorListenerAdapter;
 import android.annotation.SuppressLint;
 import android.app.Dialog;
 import android.content.Context;
-import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.database.Cursor;
 import android.graphics.Bitmap;
-import android.net.Uri;
+import android.net.http.HttpResponseCache;
 import android.net.http.SslError;
 import android.os.Build;
 import android.os.Message;
+import android.text.TextUtils;
 import android.util.Log;
 import android.util.Pair;
 import android.view.MotionEvent;
@@ -21,6 +21,7 @@ import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
 import android.webkit.DownloadListener;
+import android.webkit.HttpAuthHandler;
 import android.webkit.JavascriptInterface;
 import android.webkit.SslErrorHandler;
 import android.webkit.ValueCallback;
@@ -28,21 +29,25 @@ import android.webkit.WebChromeClient;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
-import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.GlobalOptions;
 import androidx.recyclerview.widget.RecyclerView.OnScrollChangedListener;
 
+import com.knziha.polymer.Utils.AutoCloseNetStream;
 import com.knziha.polymer.Utils.BufferedReader;
 import com.knziha.polymer.Utils.CMN;
 import com.knziha.polymer.Utils.IISTri;
 import com.knziha.polymer.Utils.RgxPlc;
+import com.knziha.polymer.browser.webkit.UniversalWebviewInterface;
+import com.knziha.polymer.browser.webkit.WebResourceResponseCompat;
+import com.knziha.polymer.browser.webkit.WebViewHelper;
 import com.knziha.polymer.toolkits.MyX509TrustManager;
 import com.knziha.polymer.toolkits.Utils.BU;
 import com.knziha.polymer.toolkits.Utils.ReusableByteOutputStream;
+import com.knziha.polymer.widgets.AppToastManager;
 import com.knziha.polymer.widgets.Utils;
-import com.knziha.polymer.widgets.WebViewmy;
+import com.knziha.polymer.widgets.WebFrameLayout;
 
 import org.adrianwalker.multilinestring.Multiline;
 import org.apache.commons.lang3.StringUtils;
@@ -62,6 +67,7 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -69,8 +75,17 @@ import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
 
+import okhttp3.Cache;
+import okhttp3.Interceptor;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
+
 import static com.knziha.polymer.BrowserActivity.TitleSep;
+import static com.knziha.polymer.HttpRequestUtil.DO_NOT_VERIFY;
 import static com.knziha.polymer.Utils.WebOptions.BackendSettings;
+import static org.xwalk.core.Utils.getTag;
+import static org.xwalk.core.Utils.unlock;
 
 /** WebView Compound Listener ：两大网页客户端监听器及Javascript桥，全局一个实例。 */
 public class WebCompoundListener extends WebViewClient implements DownloadListener, OnScrollChangedListener {
@@ -83,9 +98,12 @@ public class WebCompoundListener extends WebViewClient implements DownloadListen
 	public boolean bShowCustomView;
 	public static long CustomViewHideTime;
 	public static long PrintStartTime;
+	public boolean upsended;
 	private int mOldOri;
 	
 	BrowserActivity a;
+	
+	Object k3client;
 	
 	static class SubStringKey {
 		final int st;
@@ -142,12 +160,14 @@ public class WebCompoundListener extends WebViewClient implements DownloadListen
 	
 	Map<HostKey, ArrayList<SiteRule>> SiteConfigs = Collections.synchronizedMap(new HashMap<>());
 	ArrayList<Pair<Pattern, SiteRule>> SiteConfigsByPattern = new ArrayList<>();
-	private View appToast;
+	
+	
+	AppToastManager appToastMngr;
 	public long lastTitleSuppressTime;
 	
 	public boolean dismissAppToast() {
-		if(appToast!=null&&appToast.getVisibility()==View.VISIBLE) {
-			appToast.setVisibility(View.GONE);
+		if(appToastMngr!=null&&appToastMngr.visible()) {
+			appToastMngr.hide();
 			return true;
 		}
 		return false;
@@ -254,6 +274,13 @@ public class WebCompoundListener extends WebViewClient implements DownloadListen
 	}
 	
 	public void parseJinKe() {
+		try {
+			SSLContext sslcontext = SSLContext.getInstance("TLS");
+			sslcontext.init(null, new TrustManager[]{new MyX509TrustManager()}, new java.security.SecureRandom());
+			HttpsURLConnection.setDefaultSSLSocketFactory(sslcontext.getSocketFactory());
+		} catch (Exception e) {
+			CMN.Log(e);
+		}
 		jinkeSheaths.clear();
 		File f = new File(a.getExternalFilesDir(null), "hosts");
 		if(f.isFile()) {
@@ -276,6 +303,29 @@ public class WebCompoundListener extends WebViewClient implements DownloadListen
 		}
 	}
 	
+	@Override
+	public void doUpdateVisitedHistory(WebView view, String url, boolean isReload) {
+		//todo
+	}
+	
+	public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
+	}
+	
+//	public void onReceivedClientCertRequest(WebView view, ClientCertRequest request) {
+//		CMN.Log("onReceivedClientCertRequest 1", request);
+//		if (request!=null&&Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+//			request.cancel();
+//		}
+//	}
+
+	public void onReceivedHttpAuthRequest(WebView view, HttpAuthHandler handler, String host, String realm) {
+		//CMN.Log("onReceivedHttpAuthRequest 1", host, realm);
+		//a.root.post(() -> a.showT("onReceivedHttpAuthRequest"));
+		if(view instanceof UniversalWebviewInterface) {
+			handler.cancel();
+		}
+	}
+	
 	@SuppressLint("SourceLockedOrientationActivity")
 	public void fixVideoFullScreen() {
 		if(bShowCustomView){
@@ -289,7 +339,7 @@ public class WebCompoundListener extends WebViewClient implements DownloadListen
 	}
 	public WebChromeClient mWebClient = new WebClient();
 	
-	class WebClient extends WebChromeClient {
+	public class WebClient extends WebChromeClient {
 		private File filepickernow;
 		Dialog d; View cv;
 		
@@ -325,6 +375,7 @@ public class WebCompoundListener extends WebViewClient implements DownloadListen
 			
 			window.getDecorView().setBackground(null);
 			window.getDecorView().setPadding(0,0,0,0);
+			
 			if(view!=null) d.setContentView(cv=view);
 		}
 		
@@ -346,14 +397,22 @@ public class WebCompoundListener extends WebViewClient implements DownloadListen
 		
 		@Override
 		public void onReceivedTitle(WebView view, String title) {
-			AdvancedBrowserWebView mWebView = (AdvancedBrowserWebView) view;
-			mWebView.holder.title = title;
+			UniversalWebviewInterface webviewImpl = (UniversalWebviewInterface) (view instanceof UniversalWebviewInterface?view:getTag());
+			View mWebView = (View) webviewImpl;
+			WebFrameLayout layout = (WebFrameLayout) mWebView.getParent();
+			if(layout==null||layout.implView!=mWebView) {
+				return;
+			}
+			layout.transientTitle = title;
+			layout.holder.title = title;
 			if(mWebView==a.currentWebView) {
 				if(lastTitleSuppressTime !=0) {
-					if(CMN.now()- lastTitleSuppressTime <200) {
+					if(CMN.now()-lastTitleSuppressTime<400) {
 						return;
 					}
 					lastTitleSuppressTime =0;
+					a.root.removeCallbacks(a.postRectifyWebTitleRunnable);
+					title = layout.rectifyWebStacks(title);
 				}
 				a.webtitle.setText(title);
 			}
@@ -364,26 +423,32 @@ public class WebCompoundListener extends WebViewClient implements DownloadListen
 		@Override
 		public void onProgressChanged(WebView view, int newProgress) {
 			CMN.Log("OPC::", newProgress, Thread.currentThread().getId());
-			AdvancedBrowserWebView mWebView = (AdvancedBrowserWebView) view;
-			if(mWebView==a.currentWebView && mWebView.PageStarted) {
-				a.viewpager_holder_hasTag=true;
-				mWebView.isloading=true;
-				boolean premature=mWebView.getDelegate(BackendSettings).getPremature();
-				int lowerBound = mWebView.EnRipenPercent;
+			UniversalWebviewInterface webviewImpl = (UniversalWebviewInterface) (view instanceof UniversalWebviewInterface?view:getTag());
+			View mWebView = (View) webviewImpl;
+			WebFrameLayout layout = (WebFrameLayout) mWebView.getParent();
+			if(layout==null||layout.implView!=mWebView) {
+				return;
+			}
+			//AdvancedBrowserWebView mWebView = (AdvancedBrowserWebView) view;
+			if(mWebView==a.currentWebView && layout.PageStarted) {
+				a.tabsManagerIsDirty =true;
+				layout.isloading=true;
+				boolean premature=layout.getDelegate(BackendSettings).getPremature();
+				int lowerBound = layout.EnRipenPercent;
 				if(lowerBound<=10) {
 					lowerBound=98;
 				}
-				if(premature) {
-					lowerBound=Math.min(80, lowerBound);
-				}
+//				if(premature) {
+//					lowerBound=Math.min(80, lowerBound);
+//				}
 				if(newProgress>=lowerBound){
-					CMN.Log("newProgress>=98", newProgress);
+					CMN.Log("newProgress>=98", newProgress, premature, lowerBound);
 					a.fadeOutProgressbar();
-					if(mWebView.PageStarted) {
-						mWebView.postFinished();
+					if(layout.PageStarted) {
+						layout.postFinished();
 					}
 					if(premature) {
-						mWebView.stopLoading();
+						layout.stopLoading();
 					}
 				} else if(!a.supressingProgressListener){
 					int start = a.progressbar_background.getLevel();
@@ -395,7 +460,7 @@ public class WebCompoundListener extends WebViewClient implements DownloadListen
 						animating_progressbar.setVisibility(View.VISIBLE);
 					}
 					animating_progressbar.setAlpha(1);
-					a.progressProceed.pause();
+					//a.progressProceed.pause();
 					a.progressProceed.setIntValues(start, end);
 					a.progressProceed.setDuration((end-start)/10);
 					a.progressProceed.start();
@@ -414,14 +479,13 @@ public class WebCompoundListener extends WebViewClient implements DownloadListen
 			}
 			return;
 		}
-		WebViewmy mWebView = ((WebViewmy)view);
-		mWebView.webScale=newScale;
+		WebFrameLayout layout = view instanceof AdvancedBrowserWebView?((AdvancedBrowserWebView) view).layout:(WebFrameLayout) ((View)getTag()).getParent();
+		layout.webScale = newScale;
 	}
 	
 	@Override
 	public void onLoadResource(WebView view, String url) {
 		super.onLoadResource(view, url);
-		WebViewmy mWebView=((WebViewmy)view);
 		//CMN.Log("onLoadResource", url);
 //			if(url.contains(".mp4")){
 //				Message msg = new Message();
@@ -435,11 +499,17 @@ public class WebCompoundListener extends WebViewClient implements DownloadListen
 	
 	@Override
 	public void onPageStarted(WebView view, String url, Bitmap favicon) {
-		CMN.Log("onPageStarted……", url, view.getUrl(), Thread.currentThread().getId());
-		AdvancedBrowserWebView mWebView = (AdvancedBrowserWebView) view;
-		
+		UniversalWebviewInterface webviewImpl = (UniversalWebviewInterface) (view instanceof UniversalWebviewInterface?view:getTag());
+		CMN.Log("onPageStarted……", url, webviewImpl.getUrl(), Thread.currentThread().getId());
+		View mWebView = (View) webviewImpl;
+		WebFrameLayout layout = (WebFrameLayout) mWebView.getParent();
+		if(layout==null||layout.implView!=mWebView) {
+			return;
+		}
 		if(!a.opt.getUpdateUALowEnd()) {
-			a.updateUserAgentString(mWebView, url);
+			if(a.updateUserAgentString(layout, url)) {
+				return;
+			}
 		}
 		
 		// 滑动隐藏底栏  滑动隐藏顶栏 0
@@ -447,18 +517,19 @@ public class WebCompoundListener extends WebViewClient implements DownloadListen
 		// 底栏不动  顶栏不动 2
 		int hideBarType = 1;
 		boolean PadPartPadBar = false;
-		mWebView.layout.syncBarType(hideBarType, PadPartPadBar, a.UIData);
+		layout.syncBarType(hideBarType, PadPartPadBar, a.UIData);
 		
 		//((ViewGroup.MarginLayoutParams)mWebView.layout.getLayoutParams()).bottomMargin=2*a.UIData.bottombar2.getHeight();
-		mWebView.holder.url=url;
+		layout.transientTitle=null;
+		layout.holder.url=url;
 		startHostMatcher.set(url);
 		ArrayList<SiteRule> sm = SiteConfigs.get(startHostMatcher);
 		int EnRipenPercent=Integer.MAX_VALUE;
-		List<Object> prunes = mWebView.prunes;
-		List<SiteRule> holder = mWebView.rules;
+		List<Object> prunes = layout.prunes;
+		List<SiteRule> holder = layout.rules;
 		prunes.clear();
 		holder.clear();
-		mWebView.forbidScrollWhenSelecting = false;
+		layout.forbidScrollWhenSelecting = false;
 		boolean shutdownJs = false;
 		for (Pair<Pattern, SiteRule> siteRulePair:SiteConfigsByPattern) {
 			if(siteRulePair.first.matcher(url).find()) {
@@ -467,7 +538,7 @@ public class WebCompoundListener extends WebViewClient implements DownloadListen
 				if(rI.pruneRules!=null) {
 					prunes.addAll(Arrays.asList(rI.pruneRules));
 				}
-				mWebView.forbidScrollWhenSelecting |= rI.forbidScrollWhenSelecting;
+				layout.forbidScrollWhenSelecting |= rI.forbidScrollWhenSelecting;
 				shutdownJs |= rI.pauseJs;
 				if(rI.EnRipenPercent>10) {
 					EnRipenPercent=Math.min(EnRipenPercent, rI.EnRipenPercent);
@@ -475,7 +546,7 @@ public class WebCompoundListener extends WebViewClient implements DownloadListen
 			}
 		}
 		if(shutdownJs) {
-			mWebView.shutdownJS();
+			layout.shutdownJS();
 		}
 		if(EnRipenPercent>100) {
 			EnRipenPercent=-1;
@@ -486,10 +557,10 @@ public class WebCompoundListener extends WebViewClient implements DownloadListen
 				EnRipenPercent=sm.get(0).EnRipenPercent;
 			}
 		}
-		mWebView.EnRipenPercent=EnRipenPercent;
-		mWebView.PageStarted=true;
-		mWebView.PageVersion++;
-		mWebView.PageFinishedPosted=false;
+		layout.EnRipenPercent=EnRipenPercent;
+		layout.PageStarted=true;
+		layout.PageVersion++;
+		layout.PageFinishedPosted=false;
 		if(mWebView==a.currentWebView) {
 			a.updateProgressUI();
 		}
@@ -497,8 +568,7 @@ public class WebCompoundListener extends WebViewClient implements DownloadListen
 	
 	
 	
-	/**
-		if (!window.PPTurboKit) {
+	/**if (!window.PPTurboKit) {
 			var w = window;
 			w.PPTurboKit = 1;
 			w.addEventListener('keydown', function(e) {
@@ -515,8 +585,31 @@ public class WebCompoundListener extends WebViewClient implements DownloadListen
 					}
 				}
 			});
-			window.addEventListener('load', function(e) {
+	 		w.igNNC=0;
+			w.addEventListener('click',function(e){
+	 			console.log('click::'+w._ttlck, e);
+			  //getSelection().empty();
+	          //if(w._ttlck) {} else
+			  if(igNNC) {igNNC=0;} else
+			  if(e.target.className=='PLOD_HL') {
+				  var sel = getSelection();
+				  sel.empty();
+				  var range = new Range();
+				  range.selectNode(e.target);
+				  sel.addRange(range);
+				  polyme.sendup(chrmtd.get());
+				  igNNC=1;
+			  } else return;
+			  e.preventDefault();
+			  //console.log(e.target)
+			});
+			w.addEventListener('load', function(e) {
 				console.log('onload !!!');
+			});
+	 		w.addEventListener('touchstart', function(e){
+				if(!w._ttlck && e.touches.length==1){
+					w._ttarget = e.touches[0].target;
+				}
 			});
 			var d = document;
 			var h = d.head;
@@ -543,20 +636,6 @@ public class WebCompoundListener extends WebViewClient implements DownloadListen
 				item.content = content;
 				h.appendChild(item);
 			}
-			polyme.highlight=function(keyword) {
-				var b1 = keyword == null;
-				if (b1) keyword = '备 受 开 启';
-				if (keyword == null || b1 && keyword.trim().length == 0) return;
-				var w = window;
-				if (!w._PPMInst) {
-					polyme.loadJs('https://mark.js',
-					function() {
-						w._PPMInst.do_highlight(keyword);
-					});
-				} else {
-					w._PPMInst.do_highlight(keyword);
-				}
-			};
 			polyme.loadJs=function(url, callback) {
 				var script = d.createElement('script');
 				script.type = "text/javascript";
@@ -574,12 +653,24 @@ public class WebCompoundListener extends WebViewClient implements DownloadListen
 				_?b:h.appendChild(ele);
 	 			ele
 			};
+			polyme.highlight=function(keyword) {
+				var b1 = keyword == null;
+				if (b1) keyword = '备 受 开 启';
+				if (keyword == null || b1 && keyword.trim().length == 0) return;
+				var w = window;
+				if (!w._PPMInst) {
+					polyme.loadJs('https://mark.js',
+					function() {
+						w._PPMInst.do_highlight(keyword);
+					});
+				} else {
+					w._PPMInst.do_highlight(keyword);
+				}
+			};
 	 		w._docAnnots="";
 	 		w._docAnnott="";
 		}
-	 	var test = ['1','2','3'];
-	 	polyme.logm(test);
-	 	polyme.logm(test);
+	 	polyme.logm('1','2','3');
 	 */
 	@Multiline(trim=true, compile=true)
 	public final static String PRI = "Primary Rule Insersion";
@@ -596,24 +687,31 @@ public class WebCompoundListener extends WebViewClient implements DownloadListen
 	 * 处理历史记录。<br/>
 	 * see {@link WebClient#onProgressChanged}<br/>*/
 	@Override public void onPageFinished(WebView view, String url) {
-		AdvancedBrowserWebView mWebView=((AdvancedBrowserWebView)view);
-		if(mWebView.PageStarted) {
-			String ordinalUrl=view.getUrl();
+		UniversalWebviewInterface webviewImpl = (UniversalWebviewInterface) (view instanceof UniversalWebviewInterface?view:getTag());
+		View mWebView = (View) webviewImpl;
+		WebFrameLayout layout = (WebFrameLayout) mWebView.getParent();
+		if(layout==null||layout.implView!=mWebView) {
+			return;
+		}
+		//if(true) return;
+		if(layout.PageStarted) {
+			String ordinalUrl=webviewImpl.getUrl();
 			if(ordinalUrl!=null) {
 				url = ordinalUrl;
 			}
-			mWebView.holder.url = url;
-			CMN.Log("OPF:::", url, view.getTitle(), Thread.currentThread().getId());
+			layout.holder.url = url;
+			CMN.Log("OPF:::", url, webviewImpl.getTitle(), Thread.currentThread().getId());
 			//CMN.Log("OPF:::", mWebView.holder.url);
-			view.setTag(url);
-			mWebView.removePostFinished();
-			mWebView.PageStarted=false;
-			mWebView.holder.url=url;
-			String title = mWebView.getTitle();
-			mWebView.holder.title=title;
-			mWebView.time=System.currentTimeMillis();
-			mWebView.incrementVerIfAtNormalPage();
-			mWebView.lastScroll=view.getScrollY();
+			mWebView.setTag(url);
+			layout.removePostFinished();
+			layout.PageStarted=false;
+			layout.holder.url=url;
+			String title = layout.getTitle();
+			layout.transientTitle=title;
+			layout.holder.title=title;
+			layout.time=System.currentTimeMillis();
+			layout.incrementVerIfAtNormalPage();
+			layout.lastThumbScroll=mWebView.getScrollY();
 			
 //			boolean bEnableJavaScript = mWebView.getSettings().getJavaScriptEnabled();
 //
@@ -621,15 +719,15 @@ public class WebCompoundListener extends WebViewClient implements DownloadListen
 //				mWebView.getSettings().setJavaScriptEnabled(true);
 			
 			//mWebView.postReviveJS(0);
-			mWebView.reviveJS();
+			layout.reviveJS();
 			
 			/* 原天道契 */
-			mWebView.evaluateJavascript(PRI, null);
+			webviewImpl.evaluateJavascript(PRI, null);
 			
-			if(mWebView.rules.size()>0) {
-				for (SiteRule rI:mWebView.rules) {
+			if(layout.rules.size()>0) {
+				for (SiteRule rI:layout.rules) {
 					if(rI.JS!=null/* && rI.host.equals(finishHostMatcher)*/) {
-						mWebView.evaluateJavascript(rI.JS, null);
+						webviewImpl.evaluateJavascript(rI.JS, null);
 					}
 				}
 			}
@@ -653,7 +751,7 @@ public class WebCompoundListener extends WebViewClient implements DownloadListen
 				c.moveToFirst();
 				CMN.Log("搜索完毕...", c.getString(0));
 				//"0/0/2/0/1/5/0/4/0/1/2/2:63,0/0/2/0/1/5/0/4/0/1/2/2:65|0\\n0/0/2/0/1/5/0/4/0/1/2/2:24,0/0/2/0/1/5/0/4/0/1/2/2:26|0\\n0/0/2/0/1/5/0/4/0/1/2/2:15,0/0/2/0/1/5/0/4/0/1/2/2:17|0\\n"
-				mWebView.evaluateJavascript(WebViewmy.getResoreHighLightIncantation(c.getString(0)), new ValueCallback<String>() {
+				webviewImpl.evaluateJavascript(WebViewHelper.getInstance().getResoreHighLightIncantation(c.getString(0)), new ValueCallback<String>() {
 					@Override
 					public void onReceiveValue(String value) {
 						CMN.Log("asd", value);
@@ -662,7 +760,7 @@ public class WebCompoundListener extends WebViewClient implements DownloadListen
 			}
 			
 			if(false)
-				mWebView.evaluateJavascript("polyme.highlight('aut')", new ValueCallback<String>() {
+				webviewImpl.evaluateJavascript("polyme.highlight('aut')", new ValueCallback<String>() {
 					@Override
 					public void onReceiveValue(String value) {
 						CMN.Log("asd", value);
@@ -670,29 +768,29 @@ public class WebCompoundListener extends WebViewClient implements DownloadListen
 				});
 			
 			if(mWebView==a.currentWebView) {
-				a.webtitle.setText(title);
+				//a.webtitle.setText(title);
 				if(a.webtitle.getVisibility()==View.VISIBLE) {
 					a.etSearch.setText(url);
 				}
 				a.fadeOutProgressbar();
 			}
-			if(mWebView.clearHistroyRequested) {
-				mWebView.clearHistory();
-				mWebView.clearHistroyRequested=false;
+			if(layout.clearHistroyRequested) {
+				webviewImpl.clearHistory();
+				layout.clearHistroyRequested=false;
 			}
 			CMN.rt();
 			a.historyCon.insertUpdateBrowserUrl(url, title);
 			CMN.pt("历史插入时间：");
-			if(mWebView.holder.getLuxury()) {
-				int idx = mWebView.getThisIdx();
+			if(layout.holder.getLuxury()) {
+				int idx = layout.getThisIdx();
 				if(idx>0) {
-					mWebView.layout.getChildAt(idx-1).setVisibility(View.GONE);
+					layout.getChildAt(idx-1).setVisibility(View.GONE);
 				}
 			}
 		}
 	}
 	
-	public static void ensureMarkJS(Context context) {
+	public void ensureMarkJS(Context context) {
 		//WebCompoundListener.markjsBytesArr = new byte[WebCompoundListener.markjsBytesLen];
 		if(markjsBytesArr==null) {
 			try {
@@ -707,12 +805,29 @@ public class WebCompoundListener extends WebViewClient implements DownloadListen
 	
 	@Override
 	public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
-		handler.proceed();
+		if(handler!=null) {
+			handler.proceed();
+		} else {
+			error.hasError(0x108895);
+		}
 	}
 	
 	public boolean shouldOverrideUrlLoading(WebView view, String url)
 	{
 		CMN.Log("SOUL::", url, Thread.currentThread().getId());
+		boolean b1 = view instanceof UniversalWebviewInterface;
+		UniversalWebviewInterface webviewImpl = (UniversalWebviewInterface) (b1?view:getTag());
+		View mWebView = (View) webviewImpl;
+		WebFrameLayout layout = (WebFrameLayout) mWebView.getParent();
+		if(!b1) {
+			unlock();
+		}
+		if(layout==null||layout.implView!=mWebView) {
+			return false;
+		}
+		if(layout.forbidLoading) {
+			return true;
+		}
 		if(!url.regionMatches(false, 0, "http", 0, 4)
 				&&!url.regionMatches(false, 0, "https", 0, 5)) {
 			//if(a.webtitle.getVisibility()== View.VISIBLE) a.etSearch.setText(url);
@@ -722,79 +837,229 @@ public class WebCompoundListener extends WebViewClient implements DownloadListen
 				if(idx>0) {
 					appScheme = Utils.getSubStrWord(appScheme, 0, idx);
 				}
-				if(appToast==null) {
-					appToast = a.UIData.appToast.getViewStub().inflate();
-					TextView tv = appToast.findViewById(R.id.confirm_button);
-					tv.setOnClickListener(v -> {
-						String appUrl = (String) appToast.getTag();
-						if(appUrl!=null)
-						try {
-							a.startActivity(new Intent(Intent.ACTION_VIEW
-									, Uri.parse(appUrl)));
-							appToast.setTag(null);
-						} catch (Exception e) {
-							CMN.Log(e);
-							a.showT("跳转失败…");
-						}
-					});
-				}
-				appToast.setVisibility(View.VISIBLE);
-				appToast.setTag(url);
-				TextView tv = appToast.findViewById(R.id.text1);
-				tv.setText(appScheme+" 请求打开外部APP");
-				float targetY = 10 * GlobalOptions.density;
-				Runnable runnable = (Runnable) tv.getTag();
-				if(runnable==null) {
-					AnimatorListenerAdapter animaLis = new AnimatorListenerAdapter() {
-						@Override
-						public void onAnimationEnd(Animator animation) {
-							appToast.setVisibility(View.GONE);
-						}
-					};
-					tv.setTag(runnable = () -> appToast.animate()
-							.alpha(0)
-							.translationY(targetY)
-							.setListener(animaLis));
-				}
-				appToast.removeCallbacks(runnable);
-				appToast.setAlpha(0);
-				appToast.setTranslationY(targetY);
-				appToast.animate()
-						.alpha(1)
-						.translationY(0)
-						.setListener(null)
-				;
-				appToast.postDelayed(runnable, 2350+180);
+				
+				showT(appScheme+" 请求打开外部APP", "继续", url);
+				
 			}
 			return true;
 		}
-		AdvancedBrowserWebView mWebView = (AdvancedBrowserWebView) view;
-		if(mWebView==a.currentWebView && mWebView.holder.getLuxury()) {
+		if(mWebView==a.currentWebView && layout.holder.getLuxury()) {
 			long now = CMN.now();
 			if(now>0&&now-a.supressingNxtLux<350) {
 				CMN.Log("supressingNxtLux", url);
+				layout.setNavStacksDirty();
 				return false;
 			}
 			a.supressingNxtLux = now;
-			if(!mWebView.hasValidUrl()) {
-				mWebView.clearHistroyRequested=true;
+			if(!layout.hasValidUrl()) {
+				layout.clearHistroyRequested=true;
 			} else {
-				a.LuxuriouslyLoadUrl(mWebView, url);
+				//a.LuxuriouslyLoadUrl(layout, url);
 				return true;
 			}
 		}
 		
 		//view.loadUrl(url);
+		layout.setNavStacksDirty();
 		return false;
+	}
+	
+	public void showT(String message, String yesText, String url) {
+		if(appToastMngr==null) {
+			appToastMngr = new AppToastManager(a);
+		}
+		appToastMngr.showT(message, yesText, url, a.hasWindowFocus()?-1:0);
+	}
+	
+	public WebResourceResponse shouldInterceptRequest(WebView view, String url, String method, Map<String, String> headers) {
+		//CMN.Log("SIR::", url);
+		//CMN.Log("SIR::", headers);
+		String acc = headers.get("Accept");
+		//CMN.Log("SIR::Accept_", acc, acc.equals("*/*"));
+		if(acc==null) {
+			acc = "*/*;";
+		}
+		
+		boolean lishanxizhe = false;
+		
+		//acc.equals("*/*");
+		
+		String host = null;
+		
+		if(true) {
+			String addr = jinkeSheaths.get(SubStringKey.new_hostKey(url));
+			if(addr!=null) {
+				try {
+					URL oldUrl = new URL(url);
+					host = oldUrl.getHost();
+					url = url.replaceFirst(oldUrl.getHost(), addr);
+					CMN.Log("秦王绕柱走", url);
+					lishanxizhe = true;
+				} catch (Exception e) {
+					CMN.Log(e);
+				}
+			}
+		}
+		
+		if(lishanxizhe /*&& !(url.endsWith("google.com/")||url.endsWith("google.cn/"))*/) {//
+			try {
+				headers.put("Access-Control-Allow-Origin", "*");
+				headers.put("Access-Control-Allow-Headers","Origin, X-Requested-With, Content-Type, Accept");
+				InputStream input = null;
+				String MIME = null;
+				CMN.rt("转构开始……");
+				if(false) {
+					OkHttpClient klient = (OkHttpClient) k3client;
+					if(klient==null) {
+						int cacheSize = 10 * 1024 * 1024;
+						Interceptor headerInterceptor = new Interceptor() {
+							@Override
+							public Response intercept(Chain chain) throws IOException {
+								Request request = chain.request();
+								Response response = chain.proceed(request);
+								Response response1 = response.newBuilder()
+										.removeHeader("Pragma")
+										.removeHeader("Cache-Control")
+										//cache for 30 days
+										.header("Cache-Control", "max-age=" + 3600 * 24 * 30)
+										.build();
+								return response1;
+							}
+						};
+						klient = new OkHttpClient.Builder()
+								.connectTimeout(5, TimeUnit.SECONDS)
+								.addNetworkInterceptor(headerInterceptor)
+								.cache(true?
+										new Cache(new File(a.getExternalCacheDir(), "k3cache")
+												, cacheSize) :null ) // 配置缓存
+								//.readTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
+								//.setCache(getCache())
+								//.certificatePinner(getPinnedCerts())
+								//.setSslSocketFactory(getSSL())
+								.hostnameVerifier(DO_NOT_VERIFY)
+								.build()
+						;
+						k3client = klient;
+					}
+					Request.Builder k3request = new Request.Builder()
+							.url(url)
+							.header("Accept-Charset", "utf-8")
+							.header("Access-Control-Allow-Origin", "*")
+							.header("Access-Control-Allow-Headers","Origin, X-Requested-With, Content-Type, Accept")
+							;
+					for(String kI:headers.keySet()) {
+						k3request.header(kI, headers.get(kI));
+					}
+					//int maxSale = 60 * 60 * 24 * 28; // tolerate 4-weeks sale
+//					if (!NetworkUtils.isConnected(a))
+//					k3request.removeHeader("Pragma")
+//							.cacheControl(new CacheControl.Builder()
+//									.maxAge(0, TimeUnit.SECONDS)
+//									.maxStale(365,TimeUnit.DAYS).build())
+//							.header("Cache-Control", "public, only-if-cached, max-stale=" + maxStale);
+					if(host!=null) k3request.header("Host", host);
+					k3request.header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.106 Safari/537.36");
+					Response k3response = klient.newCall(k3request.build()).execute();
+					input = k3response.body().byteStream();
+					MIME = k3response.header("content-type");
+				}
+				else {
+					HttpURLConnection urlConnection = (HttpURLConnection) new URL(url).openConnection();
+					//urlConnection.setRequestProperty("contentType", headers.get("contentType"));
+					//urlConnection.setRequestProperty("Accept", headers.get("Accept"));
+					if(false) {
+						File httpCacheDir = new File(a.getExternalCacheDir(), "k1cache");
+						int cacheSize = 10 * 1024 * 1024;
+						try {
+							HttpResponseCache.install(httpCacheDir, cacheSize);
+						} catch (IOException e) {
+							CMN.Log(e);
+						}
+					}
+					
+					if(urlConnection instanceof HttpsURLConnection) {
+						((HttpsURLConnection)urlConnection).setHostnameVerifier(DO_NOT_VERIFY);
+					}
+					urlConnection.setRequestProperty("Accept-Charset", "utf-8");
+					urlConnection.setRequestProperty("connection", "Keep-Alive");
+					urlConnection.setRequestMethod(method);
+					urlConnection.setConnectTimeout(5000);
+					urlConnection.setUseCaches(true);
+					urlConnection.setDefaultUseCaches(true);
+					for(String kI:headers.keySet()) {
+						urlConnection.setRequestProperty(kI, headers.get(kI));
+					}
+					if(host!=null) urlConnection.setRequestProperty("Host", host);
+					urlConnection.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.106 Safari/537.36");
+					//int maxSale = 60 * 60 * 24 * 28; // tolerate 4-weeks sale
+					//if(NetworkUtils.isConnected(a))
+					//urlConnection.setRequestProperty("Cache-Control", "max-age=" + maxSale);
+					//else
+					//urlConnection.setRequestProperty("Cache-Control", "public, only-if-cached, max-stale=" + maxSale);
+					
+					//urlConnection.setRequestProperty("User-Agent", a.android_ua);
+					//urlConnection.setRequestProperty("Host", "translate.google.cn");
+					//urlConnection.setRequestProperty("Origin", "https://translate.google.cn");
+					urlConnection.connect();
+					input = urlConnection.getInputStream();
+					input = new AutoCloseNetStream(input, urlConnection);
+					MIME = urlConnection.getHeaderField("content-type");
+				}
+				CMN.pt("转构完毕！！！", input.available(), MIME);
+				if(TextUtils.isEmpty(MIME)) {
+					MIME = acc;
+				}
+				int idx = MIME.indexOf(",");
+				if(idx<0) {
+					idx = MIME.indexOf(";");
+				}
+				if(idx>=0) {
+					MIME = MIME.substring(0, idx);
+				}
+				WebResourceResponse webResourceResponse;
+				if(Utils.bigCake) {
+					webResourceResponse=new WebResourceResponse(MIME, "utf8", input);
+					webResourceResponse.setResponseHeaders(headers);
+				} else {
+					webResourceResponse = new WebResourceResponseCompat(MIME, "utf8", input);
+					((WebResourceResponseCompat)webResourceResponse).setResponseHeaders(headers);
+				}
+				//CMN.Log("百代春秋泽被万世");
+				return webResourceResponse;
+			} catch (IOException e) {
+				CMN.Log(e);
+				//return null;
+			}
+		}
+		return view==null?null:shouldInterceptRequest(view, url);
 	}
 	
 	@Override
 	public WebResourceResponse shouldInterceptRequest(WebView view, String url) {
-		AdvancedBrowserWebView mWebView = (AdvancedBrowserWebView) view;
+		boolean b1 = view instanceof UniversalWebviewInterface;
+		UniversalWebviewInterface webviewImpl = (UniversalWebviewInterface) (b1?view:getTag());
+		View mWebView = (View) webviewImpl;
+		if(!b1) {
+			Map<String, String> headers = webviewImpl.getLastRequestHeaders();
+			if(headers!=null) {
+				url = headers.get("Url");
+				WebResourceResponse ret = shouldInterceptRequest(null, url, headers.get("Method"), headers);
+				if(ret!=null) {
+					return ret;
+				}
+			}
+		}
+		WebFrameLayout layout = (WebFrameLayout) mWebView.getParent();
+		if(layout==null) {
+			return null;
+		}
+		if(url==null) {
+			return null;
+		}
 		//CMN.Log("SIR::", url, url.length(), Thread.currentThread().getId());
 		//CMN.Log(url.startsWith("https://mark.js"), markjsBytesArr!=null);
-		if(mWebView.prunes.size()>0) {
-			for(Object pI:mWebView.prunes) {
+		if(layout.prunes.size()>0) {
+			for(Object pI:layout.prunes) {
 				if(pI instanceof IISTri) {
 					IISTri tri = (IISTri) pI;
 					int len = url.length();
@@ -991,7 +1256,7 @@ public class WebCompoundListener extends WebViewClient implements DownloadListen
 						is.close();
 						BU.printFile(bos.getBytes(), 0, bos.size(), path.getAbsolutePath());
 						if(a.url_file_recorder==null) a.url_file_recorder = new FileOutputStream("/sdcard/file-url-list.txt", true);
-						a.url_file_recorder.write((mWebView.holder.url+TitleSep+path.getName()).getBytes());
+						a.url_file_recorder.write((layout.holder.url+TitleSep+path.getName()).getBytes());
 						a.url_file_recorder.flush();
 						response = new WebResourceResponse("*/*","UTF-8",new ByteArrayInputStream(bos.getBytes(), 0, bos.getCount()));
 					} catch (Exception ex) {
@@ -1024,7 +1289,7 @@ public class WebCompoundListener extends WebViewClient implements DownloadListen
 	@Override
 	public void onDownloadStart(String url, String userAgent, String contentDisposition, String mimetype, long contentLength) {
 		CMN.Log("DOWNLOAD:::", url, contentDisposition, mimetype, contentLength);
-		if(appToast!=null && appToast.getVisibility()==View.VISIBLE) {
+		if(appToastMngr!=null&&appToastMngr.visible()) {
 			return;
 		}
 		a.showDownloadDialog(url, contentLength, mimetype);
@@ -1039,51 +1304,59 @@ public class WebCompoundListener extends WebViewClient implements DownloadListen
 	}
 	
 	@Override
-	public void onScrollChange(View v, int scrollX, int scrollY, int oldx, int oldy) {
-		AdvancedBrowserWebView webview = (AdvancedBrowserWebView) v;
+	public void onScrollChange(View view, int scrollX, int scrollY, int oldx, int oldy) {
+		UniversalWebviewInterface webviewImpl = (UniversalWebviewInterface) (view instanceof UniversalWebviewInterface?view:getTag());
+		View mWebView = (View) webviewImpl;
+		WebFrameLayout layout = (WebFrameLayout) mWebView.getParent();
+		if(layout==null||layout.implView!=mWebView) {
+			return;
+		}
 		if(PrintStartTime>0 && System.currentTimeMillis()-CustomViewHideTime<5350){
 			CMN.Log("re_scroll...", a.focused);
-			webview.SafeScrollTo(a.printSX, a.printSY);
-			webview.requestLayout();
+			webviewImpl.SafeScrollTo(a.printSX, a.printSY);
+			mWebView.requestLayout();
 			return;
 		}
 		boolean scrollforbid;
 		//CMN.Log("onScrollChange", scrollY-oldy);
-		if(webview.forbidScrollWhenSelecting && webview.bIsActionMenuShown && oldy-scrollY>200
+		if(layout.forbidScrollWhenSelecting && layout.bIsActionMenuShown && oldy-scrollY>200
 			|| CustomViewHideTime>0 && System.currentTimeMillis()-CustomViewHideTime<350){
 			CMN.Log("re_scroll...");
-			webview.SafeScrollTo(oldx, oldy);
+			webviewImpl.SafeScrollTo(oldx, oldy);
 			return;
 		}
 	}
 	
+	@org.xwalk.core.JavascriptInterface
 	@JavascriptInterface
 	public void SaveAnnots(long tabID, String annots, String texts) {
 		CMN.Log("SaveAnnots", tabID, annots, texts, a.historyCon.isOpen());
 		//if(true) return;
-		AdvancedBrowserWebView mWebView = a.id_table.get(tabID);
-		if(mWebView!=null && mWebView.HLED) {
-			mWebView.HLED=false;
+		WebFrameLayout layout = a.getWebViewFromID(tabID);
+		if(layout!=null && layout.HLED) {
+			layout.HLED=false;
 			//a.root.removeCallbacks()
 			long ret=-1;
 			if(a.historyCon.isOpen()) {
 				CMN.rt("保存中……");
 				try {
-					ret = a.historyCon.insertUpdateNote(mWebView.holder.url, annots, texts);
+					ret = a.historyCon.insertUpdateNote(layout.holder.url, annots, texts);
 				} catch (Exception e) {
 					CMN.Log(e);
 				}
-				CMN.pt("保存了……", ret, mWebView.holder.url);
+				CMN.pt("保存了……", ret, layout.holder.url);
 			}
 		}
 	}
 	
+	@org.xwalk.core.JavascriptInterface
 	@JavascriptInterface
 	public void log(String msg) {
 		CMN.Log(msg);
 		
 	}
 	
+	@org.xwalk.core.JavascriptInterface
 	@JavascriptInterface
 	public void logm(String[] msg) {
 		CMN.Log("logm", msg.length, msg);
@@ -1091,20 +1364,26 @@ public class WebCompoundListener extends WebViewClient implements DownloadListen
 		
 	}
 	
+	@org.xwalk.core.JavascriptInterface
 	@JavascriptInterface
 	public void sendup(long id) {
-		AdvancedBrowserWebView mWebView = a.id_table.get(id);
-		if(mWebView==a.currentWebView) {
-			mWebView.post(new Runnable() {
+		WebFrameLayout layout = a.getWebViewFromID(id);
+		if(layout==a.currentViewImpl) {
+			//if(false)
+			//if(!mWebView.bIsActionMenuShown)
+			upsended = true;
+			View view = layout.implView;
+			view.postDelayed(new Runnable() {
 				@Override
 				public void run() {
-					MotionEvent evt = MotionEvent.obtain(0,0,MotionEvent.ACTION_DOWN, mWebView.lastX, mWebView.lastY, 0);
-					mWebView.dispatchTouchEvent(evt);
+					long time = CMN.now();
+					MotionEvent evt = MotionEvent.obtain(time, time,MotionEvent.ACTION_DOWN, layout.lastX, layout.lastY, 0);
+					view.dispatchTouchEvent(evt);
 					evt.setAction(MotionEvent.ACTION_UP);
-					mWebView.dispatchTouchEvent(evt);
+					view.dispatchTouchEvent(evt);
 					evt.recycle();
 				}
-			});
+			}, Utils.version>=29?0:150);
 		}
 	}
 }

@@ -49,12 +49,14 @@ import android.view.ViewParent;
 import android.view.Window;
 import android.view.WindowManager;
 import android.widget.EditText;
+import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.GlobalOptions;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.knziha.polymer.R;
 import com.knziha.polymer.Toastable_Activity;
 import com.knziha.polymer.Utils.CMN;
 import com.knziha.polymer.Utils.Options;
@@ -101,12 +103,14 @@ public class Utils {
 	public static Rect rect = new Rect();
 	public static final boolean littleCat = Build.VERSION.SDK_INT<=Build.VERSION_CODES.KITKAT;
 	public static final boolean littleCake = Build.VERSION.SDK_INT<=21;
+	public static final boolean bigCake= Build.VERSION.SDK_INT>=21;
 	public static final boolean bigMountain = Build.VERSION.SDK_INT>22;
 	public static final boolean bigMouth = Build.VERSION.SDK_INT>=Build.VERSION_CODES.O;
 	public static final boolean hugeHimalaya = Build.VERSION.SDK_INT>=Build.VERSION_CODES.P;
 	public static final boolean metaKill = Build.VERSION.SDK_INT>=Build.VERSION_CODES.Q;
 	//public static final boolean isHuawei = Build.MANUFACTURER.contains("HUAWEI");
 	public static final WeakReference<Bitmap> DummyBMRef = new WeakReference<>(null);
+	public static final int version = Build.VERSION.SDK_INT;
 	
 	/**
      * @param dp Desired size in dp (density-independent pixels)
@@ -391,6 +395,18 @@ public class Utils {
 		return angle==Surface.ROTATION_90||angle==Surface.ROTATION_270;
 	}
 	
+	public static String getTextInView(View view) {
+		return ((TextView)view).getText().toString();
+	}
+	
+	public static String getFieldInView(View view) {
+		return ((TextView)view).getText().toString().trim().replaceAll("[\r\n]", "");
+	}
+	
+	public static String getTextInView(View view, int id) {
+		return ((TextView)view.findViewById(id)).getText().toString();
+	}
+	
 	public static class DummyOnClick implements View.OnClickListener {
 		@Override
 		public void onClick(View v) {
@@ -518,16 +534,16 @@ public class Utils {
 		int cc = vg.getChildCount();
 		View ca;
 		boolean longClickable = clicker instanceof View.OnLongClickListener;
+		if(vg.isClickable()) {
+			click(vg, clicker, longClickable);
+		}
 		for (int i = 0; i < cc; i++) {
 			ca = vg.getChildAt(i);
 			//CMN.Log("setOnClickListenersOneDepth", ca, (i+1)+"/"+(cc));
 			if(ca instanceof ViewGroup) {
 				if(--depth>0) {
 					if(ca.isClickable()) {
-						ca.setOnClickListener(clicker);
-						if(longClickable&&ca.isLongClickable()) {
-							ca.setOnLongClickListener((View.OnLongClickListener) clicker);
-						}
+						click(ca, clicker, longClickable);
 					} else {
 						setOnClickListenersOneDepth((ViewGroup) ca, clicker, depth, viewFetcher);
 					}
@@ -536,10 +552,7 @@ public class Utils {
 				int id = ca.getId();
 				if(ca.getId()!=View.NO_ID){
 					if(!(ca instanceof EditText) && ca.isEnabled()) {
-						ca.setOnClickListener(clicker);
-						if(longClickable && ca.isLongClickable()) {
-							ca.setOnLongClickListener((View.OnLongClickListener) clicker);
-						}
+						click(ca, clicker, longClickable);
 					}
 					if(viewFetcher!=null) {
 						for (int j = 0; j < viewFetcher.length; j++) {
@@ -551,6 +564,13 @@ public class Utils {
 					}
 				}
 			}
+		}
+	}
+	
+	private static void click(View ca, View.OnClickListener clicker, boolean longClickable) {
+		ca.setOnClickListener(clicker);
+		if(longClickable&&ca.isLongClickable()) {
+			ca.setOnLongClickListener((View.OnLongClickListener) clicker);
 		}
 	}
 	

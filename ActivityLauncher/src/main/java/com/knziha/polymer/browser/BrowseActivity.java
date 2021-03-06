@@ -10,6 +10,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
+import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.database.Cursor;
 import android.graphics.Color;
@@ -26,7 +27,11 @@ import android.os.SystemClock;
 import android.text.TextPaint;
 import android.text.TextUtils;
 import android.util.DisplayMetrics;
+import android.view.InputQueue;
+import android.view.KeyEvent;
 import android.view.LayoutInflater;
+import android.view.MotionEvent;
+import android.view.SurfaceHolder;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
@@ -38,35 +43,39 @@ import android.widget.GridView;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.appcompat.app.GlobalOptions;
 import androidx.databinding.DataBindingUtil;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.bumptech.glide.util.Util;
+import com.google.android.material.appbar.AppBarLayout;
 import com.jess.ui.TwoWayAdapterView;
 import com.jess.ui.TwoWayGridView;
 import com.knziha.filepicker.model.DialogConfigs;
 import com.knziha.filepicker.model.DialogProperties;
 import com.knziha.filepicker.model.DialogSelectionListener;
 import com.knziha.filepicker.view.FilePickerDialog;
+import com.knziha.polymer.BrowserActivity;
 import com.knziha.polymer.PDocViewerActivity;
 import com.knziha.polymer.R;
 import com.knziha.polymer.Toastable_Activity;
 import com.knziha.polymer.Utils.CMN;
+import com.knziha.polymer.browser.webkit.UniversalWebviewInterface;
+import com.knziha.polymer.browser.webkit.WebViewImplExt;
+import com.knziha.polymer.browser.webkit.XPlusWebView;
+import com.knziha.polymer.browser.webkit.XWalkWebView;
 import com.knziha.polymer.databinding.BrowseMainBinding;
 import com.knziha.polymer.databinding.TaskItemsBinding;
 import com.knziha.polymer.toolkits.MyX509TrustManager;
+import com.knziha.polymer.wget.Direct;
 import com.knziha.polymer.widgets.DescriptiveImageView;
 import com.knziha.polymer.widgets.Utils;
+import com.knziha.polymer.widgets.WebFrameLayout;
+import com.tencent.smtt.sdk.QbSdk;
 
-import org.apache.http.HttpEntity;
-import org.apache.http.client.config.RequestConfig;
-import org.apache.http.client.methods.CloseableHttpResponse;
-import org.apache.http.client.methods.HttpGet;
-import org.apache.http.impl.client.CloseableHttpClient;
-import org.apache.http.impl.client.HttpClients;
-import org.apache.http.util.EntityUtils;
+import org.xwalk.core.XWalkActivityDelegate;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -92,7 +101,6 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
 
 import static com.knziha.polymer.browser.BrowseFieldHandler.dateToStr;
-import static com.knziha.polymer.qrcode.QRActivity.StaticTextExtra;
 import static com.knziha.polymer.widgets.Utils.RequsetUrlFromCamera;
 
 /** BrowseActivity Is Not The Browser. It is a work station for resource sniffers.
@@ -102,17 +110,17 @@ public class BrowseActivity extends Toastable_Activity
 		implements View.OnClickListener, View.OnLongClickListener {
 	BrowseMainBinding UIData;
 	
-	WebView webview_Player;
-	com.tencent.smtt.sdk.WebView x5_webview_Player;
+	UniversalWebviewInterface webview_Player;
 	
 	WebBrowseListener listener;
-	WebBrowseListenerX5 listenerX5;
 	
 	BrowseTaskExecutor taskExecutor;
 	private File download_path;
 	private boolean autoRefreshing;
 	private SharedPreferences preference;
 	
+	private XWalkActivityDelegate mActivityDelegate;
+
 	static {
 		try {
 			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -123,9 +131,6 @@ public class BrowseActivity extends Toastable_Activity
 			CMN.Log(e);
 		}
 	}
-	
-	boolean mWakeLocked;
-	PowerManager.WakeLock mWakeLock;
 	private long deletingRow;
 	private boolean isViewDirty;
 	String SearchText;
@@ -141,15 +146,46 @@ public class BrowseActivity extends Toastable_Activity
 		}
 	}
 	
-	private void initX5WebStation() {
-		x5_webview_Player = new com.tencent.smtt.sdk.WebView(this);
-		Utils.addViewToParent(x5_webview_Player, UIData.webStation);
-		listenerX5 = new WebBrowseListenerX5(this, x5_webview_Player);
+	private void initX5WebStation() throws IOException {
+		QbSdk.PreInitCallback cb = new QbSdk.PreInitCallback() {
+			@Override
+			public void onViewInitFinished(boolean arg0) {
+				// TODO Auto-generated method stub
+				//x5內核初始化完成的回调，为true表示x5内核加载成功，否则表示x5内核加载失败，会自动切换到系统内核。
+				CMN.Log( " onViewInitFinished is " + arg0);
+			}
+			@Override
+			public void onCoreInitFinished() {
+				// TODO Auto-generated method stub
+			}
+		};
+		//x5内核初始化接口
+		QbSdk.initX5Environment(getApplicationContext(),  cb);
+		CMN.Log("initX5WebStation");
+		WebFrameLayout layout = new WebFrameLayout(this, new BrowserActivity.TabHolder());
+		layout.appBarLayout = new AppBarLayout(this);
+		webview_Player = new XPlusWebView(BrowseActivity.this);
+		layout.appBarLayout = new AppBarLayout(this);
+		webview_Player.setLayoutParent(layout, true);
+		Utils.addViewToParent(layout, UIData.webStation);
+		listener = new WebBrowseListener(BrowseActivity.this, webview_Player);
+	}
+	
+	private void initXWalkWebStation() {
+		WebFrameLayout layout = new WebFrameLayout(this, new BrowserActivity.TabHolder());
+		webview_Player = new XWalkWebView(this);
+		layout.appBarLayout = new AppBarLayout(this);
+		webview_Player.setLayoutParent(layout, true);
+		Utils.addViewToParent(layout, UIData.webStation);
+		listener = new WebBrowseListener(this, webview_Player);
 	}
 	
 	private void initStdWebStation() {
-		webview_Player = new WebView(this);
-		Utils.addViewToParent(webview_Player, UIData.webStation);
+		WebFrameLayout layout = new WebFrameLayout(this, new BrowserActivity.TabHolder());
+		webview_Player = new WebViewImplExt(this);
+		layout.appBarLayout = new AppBarLayout(this);
+		webview_Player.setLayoutParent(layout, true);
+		Utils.addViewToParent(layout, UIData.webStation);
 		listener = new WebBrowseListener(this, webview_Player);
 	}
 	
@@ -181,13 +217,14 @@ public class BrowseActivity extends Toastable_Activity
 	Map<Long, ScheduleTask> scheduleMap = Collections.synchronizedMap(new HashMap<>());
 	Map<Long, PendingIntent> intentMap = Collections.synchronizedMap(new HashMap<>());
 	Map<Long, ViewHolder> viewMap = new HashMap<>();
-	private boolean checkResumeQRText;
 	
 	Random random = new Random();
 	
 	public boolean MainMenuListVis;
 	
 	AppHandler appHandler = new AppHandler(this);
+	
+	
 	
 	static class AppHandler extends Handler{
 		final WeakReference<BrowseActivity> aRef;
@@ -207,7 +244,35 @@ public class BrowseActivity extends Toastable_Activity
 				if(a.autoRefreshing) {
 					sendEmptyMessageDelayed(110, 900);
 				}
+			} else if(msg.what==111) {
+				long freeSpc = a.download_path.getFreeSpace();
+				if(freeSpc<1024*1024*2) {
+					Direct.shouldDownload = false;
+					CMN.Log("存储耗尽");
+				} else {
+					long delay = 1000*60;
+					freeSpc/=1024*1024;
+					if(freeSpc>1024) {
+						delay *= 25;
+					} else if(freeSpc>512) {
+						delay *= 10;
+					} else if(freeSpc>128) {
+						delay *= 5;
+					} else if(freeSpc<=8) {
+						delay /= 2;
+					}
+					sendEmptyMessageDelayed(111, delay);
+				}
 			}
+		}
+	}
+	
+	boolean startedWatchSpace;
+	
+	void startWatchSpace() {
+		if(!startedWatchSpace) {
+			startedWatchSpace=true;
+			appHandler.sendEmptyMessage(111);
 		}
 	}
 	
@@ -222,12 +287,12 @@ public class BrowseActivity extends Toastable_Activity
 		}
 	}
 	
+	int webType=2;
 	
 	@Override
 	protected void onCreate(Bundle savedInstanceState) {
 		super.onCreate(savedInstanceState);
-		PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
-		mWakeLock = pm.newWakeLock(PowerManager.FULL_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP | PowerManager.ON_AFTER_RELEASE, "servis:SimpleTimer");
+		
 		UIData = DataBindingUtil.setContentView(this, R.layout.browse_main);
 		preference = getSharedPreferences("browse", 0);
 		root = UIData.root;
@@ -362,16 +427,49 @@ public class BrowseActivity extends Toastable_Activity
 		} catch (IOException e) {
 			//CMN.Log(e);
 		}
-		if(Utils.littleCat) {
-			initX5WebStation();
-		} else {
-			initStdWebStation();
-		}
+		initWebStations();
 		CMN.Log("启动...");
 		Utils.setOnClickListenersOneDepth(UIData.toolbarContent, this, 1, null); //switchWidget
-		Window window = getWindow();
+		Window window = super.getWindow();
 		if(Build.VERSION.SDK_INT>=21) {
 			window.setStatusBarColor(0xff8f8f8f);
+		}
+	}
+	
+	private void initWebStations() {
+		if(webview_Player==null)
+		if(webType==2) {
+			Runnable completeCommand = () -> {
+				try {
+					initXWalkWebStation();
+				} catch (Exception e) {
+					CMN.Log(e);
+					webType=0;
+					initWebStations();
+				}
+			};
+			try {
+				this.mActivityDelegate = new XWalkActivityDelegate(this, completeCommand, completeCommand);
+				this.mActivityDelegate.onResume();
+			} catch (Exception e) {
+				CMN.Log(e);
+				webType=0;
+			}
+		}
+		if(webType==1) {
+			try {
+				initX5WebStation();
+			} catch (IOException e) {
+				webType=0;
+				CMN.Log(e);
+			}
+		}
+		if(webType==0){
+			try {
+				initStdWebStation();
+			} catch (Exception e) {
+				CMN.Log(e);
+			}
 		}
 	}
 	
@@ -395,18 +493,8 @@ public class BrowseActivity extends Toastable_Activity
 	@Override
 	protected void onResume() {
 		super.onResume();
-		if(checkResumeQRText && StaticTextExtra!=null) {
-			editHandler.setText(StaticTextExtra);
-			StaticTextExtra = null;
-		}
 		if(autoRefreshing) {
 			appHandler.sendEmptyMessage(110);
-		}
-		if(mWakeLocked) {
-			try {
-				mWakeLock.release();
-			} catch (Exception ignored) { }
-			mWakeLocked=false;
 		}
 	}
 	
@@ -499,12 +587,13 @@ public class BrowseActivity extends Toastable_Activity
 	}
 	
 	private void searchInDatabase(int start, String kay) {
+		kay = kay.toLowerCase();
 		cursor.moveToPosition(start);
 		int foundIdx=-1;
 		while(cursor.moveToNext()) {
 			String val = cursor.getString(1);
-			if(val!=null&&val.contains(kay)
-					||(val=cursor.getString(2))!=null&&val.contains(kay)) {
+			if(val!=null&&val.toLowerCase().contains(kay)
+					||(val=cursor.getString(2))!=null&&val.toLowerCase().contains(kay)) {
 				foundIdx = cursor.getPosition();
 				break;
 			}
@@ -537,25 +626,11 @@ public class BrowseActivity extends Toastable_Activity
 	}
 	
 	public void stopWebView() {
-		boolean x5 = listenerX5!=null;
-		if(x5) {
-			if(listenerX5!=null)
-				listenerX5.stopWebview();
-		} else {
-			if(listener!=null)
-				listener.stopWebview();
-		}
+		listener.stopWebview();
 	}
 	
 	public void clearWebview() {
-		boolean x5 = listenerX5!=null;
-		if(x5) {
-			if(listenerX5!=null)
-				listenerX5.clearWebview();
-		} else {
-			if(listener!=null)
-				listener.clearWebview();
-		}
+		listener.clearWebview();
 	}
 	
 	public void updateTitleForRow(long id, String newTitle) {
@@ -891,7 +966,6 @@ public class BrowseActivity extends Toastable_Activity
 	
 	// 任务启动，添加记录至图
 	DownloadTask startTaskForDB(BrowseTaskExecutor taskExecutor, Cursor cursor) {
-		boolean x5 = listenerX5!=null;
 		long id = cursor.getLong(0);
 		DownloadTask task = taskMap.get(id);
 		if(task!=null) {
@@ -913,11 +987,7 @@ public class BrowseActivity extends Toastable_Activity
 		if(ext!=null) {
 			if(task.ext1!=null || task.ext2!=null) {
 				UIData.root.post(() -> {
-					if(x5) {
-						listenerX5.loadUrl(url, finalTask);
-					} else {
-						listener.loadUrl(url, finalTask);
-					}
+					listener.loadUrl(url, finalTask);
 				});
 				started=true;
 			}
@@ -1028,8 +1098,13 @@ public class BrowseActivity extends Toastable_Activity
 				CMN.Log("接收到任务：", task, CMN.id(this), schedule);
 				queueTaskForDB(task, schedule);
 			}
-			mWakeLock.acquire();
-			mWakeLock.release();
+			try {
+				acquireWakeLock();
+				mWakeLock.release();
+				mWakeLocked = false;
+			} catch (Exception e) {
+				CMN.Log(e);
+			}
 		}
 	}
 	
@@ -1043,9 +1118,14 @@ public class BrowseActivity extends Toastable_Activity
 			if(Utils.littleCat) {
 				checkResumeQRText = true;
 			}
-			if(text!=null) {
-				editHandler.setText(text);
-			}
+			onQRGetText(text);
+		}
+	}
+	
+	@Override
+	protected void onQRGetText(String text) {
+		if(text!=null) {
+			editHandler.setText(text);
 		}
 	}
 	
@@ -1104,6 +1184,11 @@ public class BrowseActivity extends Toastable_Activity
 					if(title!=null&&task.shotExt !=null) {
 						task.shotFn = title;
 					}
+					if(download_path.getFreeSpace()<1024*1024*1024) {
+						startWatchSpace();
+					} else {
+						Direct.shouldDownload = true;
+					}
 					task.download(url);
 				} else {
 					task.abort();
@@ -1146,6 +1231,7 @@ public class BrowseActivity extends Toastable_Activity
 		return headers;
 	}
 	
+	@org.xwalk.core.JavascriptInterface
 	@JavascriptInterface
 	public String httpGet(String url, String[] headerArr) {
 		//if(true) return "x";
@@ -1211,44 +1297,44 @@ public class BrowseActivity extends Toastable_Activity
 	
 	/** https://www.cnblogs.com/hhhshct/p/8523697.html */
 	public static String get_content(String url, HashMap<String, String> headers) {
-		CloseableHttpClient httpClient = null;
-		CloseableHttpResponse response = null;
 		String result = "";
-		try {
-			CMN.Log("result?1?", result);
-			httpClient = HttpClients.createDefault();
-			HttpGet httpGet = new HttpGet(url);
-			httpGet.setHeader("Authorization", "Bearer da3efcbf-0845-4fe3-8aba-ee040be542c0");
-			if(headers!=null) {
-				for(String key:headers.keySet()) {
-					httpGet.setHeader(key, headers.get(key));
-				}
-			}
-			RequestConfig requestConfig =
-					RequestConfig.custom()
-							.setConnectTimeout(35000)// 连接主机服务超时时间
-							.setConnectionRequestTimeout(35000)// 请求超时时间
-							.setSocketTimeout(60000)// 数据读取超时时间
-							.build();
-			httpGet.setConfig(requestConfig);
-			response = httpClient.execute(httpGet);
-			HttpEntity entity = response.getEntity();
-			result = EntityUtils.toString(entity);
-		} catch (Exception e) {
-			CMN.Log(e);
-		} finally {
-			// 关闭资源
-			if (null != response) {
-				try {
-					response.close();
-				} catch (IOException ignored) { }
-			}
-			if (null != httpClient) {
-				try {
-					httpClient.close();
-				} catch (IOException ignored) { }
-			}
-		}
+//		CloseableHttpClient httpClient = null;
+//		CloseableHttpResponse response = null;
+//		try {
+//			CMN.Log("result?1?", result);
+//			httpClient = HttpClients.createDefault();
+//			HttpGet httpGet = new HttpGet(url);
+//			httpGet.setHeader("Authorization", "Bearer da3efcbf-0845-4fe3-8aba-ee040be542c0");
+//			if(headers!=null) {
+//				for(String key:headers.keySet()) {
+//					httpGet.setHeader(key, headers.get(key));
+//				}
+//			}
+//			RequestConfig requestConfig =
+//					RequestConfig.custom()
+//							.setConnectTimeout(35000)// 连接主机服务超时时间
+//							.setConnectionRequestTimeout(35000)// 请求超时时间
+//							.setSocketTimeout(60000)// 数据读取超时时间
+//							.build();
+//			httpGet.setConfig(requestConfig);
+//			response = httpClient.execute(httpGet);
+//			HttpEntity entity = response.getEntity();
+//			result = EntityUtils.toString(entity);
+//		} catch (Exception e) {
+//			CMN.Log(e);
+//		} finally {
+//			// 关闭资源
+//			if (null != response) {
+//				try {
+//					response.close();
+//				} catch (IOException ignored) { }
+//			}
+//			if (null != httpClient) {
+//				try {
+//					httpClient.close();
+//				} catch (IOException ignored) { }
+//			}
+//		}
 		return result;
 	}
 }
